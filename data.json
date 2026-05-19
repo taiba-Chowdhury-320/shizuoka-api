@@ -2,5 +2,13 @@
   "apiUrl": "https://shizuoka-api.vercel.app/api/chat",
   "version": "1.0.11",
   "author": "Rocky Chowdhury",
-  "status": "online"
+  "bot": "GoatBot Messenger",
+  "status": "online",
+  "endpoints": {
+    "chat": "?action=chat&ask=",
+    "teach": "?action=teach&ask=&answer=&uid=",
+    "allteach": "?action=allteach",
+    "teachers": "?action=teachers",
+    "mystats": "?action=mystats&uid="
+  }
 }
