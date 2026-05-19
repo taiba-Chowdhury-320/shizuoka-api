@@ -1,106 +1,72 @@
-export default async function handler(req, res) {
-  res.setHeader("Access-Control-Allow-Origin", "*");
+export const config = { runtime: "edge" };
 
-  const { action, ask, answer, uid } = req.query;
+const DB = {
+  teaches: {},
+  stats: {},
+};
+
+export default async function handler(req) {
+  const { searchParams } = new URL(req.url);
+  const action = searchParams.get("action");
+  const ask = searchParams.get("ask");
+  const answer = searchParams.get("answer");
+  const uid = searchParams.get("uid");
+
+  const headers = { "Content-Type": "application/json" };
 
   // ─── CHAT ───
   if (action === "chat") {
-    if (!ask) return res.json({ error: "Missing 'ask' param" });
+    if (!ask) return new Response(JSON.stringify({ error: "Missing ask" }), { headers });
 
     const key = ask.toLowerCase().trim();
-
-    // Check taught answers first
-    const teaches = await getTeaches();
-    if (teaches[key]) {
-      const answers = teaches[key].split(",");
-      const reply = answers[Math.floor(Math.random() * answers.length)].trim();
-      return res.json({ status: true, reply, source: "taught" });
+    if (DB.teaches[key]) {
+      const arr = DB.teaches[key].split(",");
+      const reply = arr[Math.floor(Math.random() * arr.length)].trim();
+      return new Response(JSON.stringify({ status: true, reply, source: "taught" }), { headers });
     }
 
-    // Fallback: Simsimi API
-    const simsimi = await callSimsimi(ask);
-    return res.json({ status: true, reply: simsimi, source: "simsimi" });
+    // Simsimi fallback
+    try {
+      const r = await fetch(`https://api.simsimi.net/v2/?text=${encodeURIComponent(ask)}&lc=bd`, {
+        headers: { "x-api-key": "SIMSIMI_KEY_HERE" }
+      });
+      const d = await r.json();
+      const reply = d.success || "Amake aro shekao! 😅";
+      return new Response(JSON.stringify({ status: true, reply, source: "simsimi" }), { headers });
+    } catch {
+      return new Response(JSON.stringify({ status: true, reply: "Ektu pore try koro! 🙏" }), { headers });
+    }
   }
 
   // ─── TEACH ───
   if (action === "teach") {
     if (!ask || !answer || !uid)
-      return res.json({ error: "Missing params" });
+      return new Response(JSON.stringify({ error: "Missing params" }), { headers });
 
-    const teaches = await getTeaches();
-    teaches[ask.toLowerCase().trim()] = answer;
-    await saveTeaches(teaches);
+    DB.teaches[ask.toLowerCase().trim()] = answer;
+    DB.stats[uid] = (parseInt(DB.stats[uid] || 0) + 1);
 
-    const stats = await getStats();
-    stats[uid] = (parseInt(stats[uid] || 0) + 1).toString();
-    await saveStats(stats);
-
-    return res.json({ status: true, message: "Taught successfully! ✅" });
+    return new Response(JSON.stringify({ status: true, message: "Taught successfully! ✅" }), { headers });
   }
 
-  // ─── MY STATS ───
-  if (action === "mystats") {
-    if (!uid) return res.json({ error: "Missing uid" });
-    const stats = await getStats();
-    const count = stats[uid] || 0;
-    return res.json({ status: true, uid, count });
-  }
-
-  // ─── ALL TEACH COUNT ───
+  // ─── ALLTEACH ───
   if (action === "allteach") {
-    const teaches = await getTeaches();
-    return res.json({ status: true, total: Object.keys(teaches).length });
+    return new Response(JSON.stringify({ status: true, total: Object.keys(DB.teaches).length }), { headers });
   }
 
-  // ─── TEACHERS LIST ───
+  // ─── MYSTATS ───
+  if (action === "mystats") {
+    return new Response(JSON.stringify({ status: true, count: DB.stats[uid] || 0 }), { headers });
+  }
+
+  // ─── TEACHERS ───
   if (action === "teachers") {
-    const stats = await getStats();
-    const sorted = Object.entries(stats)
-      .sort((a, b) => parseInt(b[1]) - parseInt(a[1]))
+    const sorted = Object.entries(DB.stats)
+      .sort((a, b) => b[1] - a[1])
       .slice(0, 10)
-      .map(([uid, count]) => ({ uid, count: parseInt(count) }));
-    return res.json({ status: true, teachers: sorted });
+      .map(([uid, count]) => ({ uid, count }));
+    return new Response(JSON.stringify({ status: true, teachers: sorted }), { headers });
   }
 
-  return res.json({ error: "Invalid action" });
-}
-
-// ─── Simsimi API ───
-async function callSimsimi(text) {
-  try {
-    const r = await fetch("https://simsimi.fun/api/v2", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        text,
-        lc: "bd",
-        key: process.env.SIMSIMI_API_KEY,
-      }),
-    });
-    const data = await r.json();
-    return data.success || "Amake aro shekao! 😅";
-  } catch {
-    return "Ektu pore try koro! 🙏";
-  }
-}
-
-// ─── KV Store Helpers (Vercel KV) ───
-import { kv } from "@vercel/kv";
-
-async function getTeaches() {
-  const data = await kv.get("teaches");
-  return data || {};
-}
-
-async function saveTeaches(obj) {
-  await kv.set("teaches", obj);
-}
-
-async function getStats() {
-  const data = await kv.get("stats");
-  return data || {};
-}
-
-async function saveStats(obj) {
-  await kv.set("stats", obj);
+  return new Response(JSON.stringify({ error: "Invalid action" }), { headers });
 }
