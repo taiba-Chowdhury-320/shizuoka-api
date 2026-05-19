@@ -1,72 +1,87 @@
 export const config = { runtime: "edge" };
 
-const DB = {
-  teaches: {},
-  stats: {},
-};
+// Simple in-memory DB (Vercel Edge এ persistent না, KV লাগবে)
+// নিচে KV ছাড়া JSON store দিচ্ছি
 
 export default async function handler(req) {
   const { searchParams } = new URL(req.url);
-  const action = searchParams.get("action");
-  const ask = searchParams.get("ask");
-  const answer = searchParams.get("answer");
-  const uid = searchParams.get("uid");
+  const headers = {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+  };
 
-  const headers = { "Content-Type": "application/json" };
+  const q = searchParams.get("q") || searchParams.get("ask") || "";
+  const senderId = searchParams.get("senderId") || searchParams.get("uid") || "unknown";
 
-  // ─── CHAT ───
-  if (action === "chat") {
-    if (!ask) return new Response(JSON.stringify({ error: "Missing ask" }), { headers });
-
-    const key = ask.toLowerCase().trim();
-    if (DB.teaches[key]) {
-      const arr = DB.teaches[key].split(",");
-      const reply = arr[Math.floor(Math.random() * arr.length)].trim();
-      return new Response(JSON.stringify({ status: true, reply, source: "taught" }), { headers });
-    }
-
-    // Simsimi fallback
-    try {
-      const r = await fetch(`https://api.simsimi.net/v2/?text=${encodeURIComponent(ask)}&lc=bd`, {
-        headers: { "x-api-key": "SIMSIMI_KEY_HERE" }
-      });
-      const d = await r.json();
-      const reply = d.success || "Amake aro shekao! 😅";
-      return new Response(JSON.stringify({ status: true, reply, source: "simsimi" }), { headers });
-    } catch {
-      return new Response(JSON.stringify({ status: true, reply: "Ektu pore try koro! 🙏" }), { headers });
-    }
+  if (!q) {
+    return new Response(
+      JSON.stringify({ success: false, message: "Missing query" }),
+      { headers }
+    );
   }
 
-  // ─── TEACH ───
-  if (action === "teach") {
-    if (!ask || !answer || !uid)
-      return new Response(JSON.stringify({ error: "Missing params" }), { headers });
+  // DB থেকে শেখানো answer খোঁজো
+  const db = await getDB();
+  const key = q.toLowerCase().trim();
+  const found = db.teaches[key];
 
-    DB.teaches[ask.toLowerCase().trim()] = answer;
-    DB.stats[uid] = (parseInt(DB.stats[uid] || 0) + 1);
+  if (found) {
+    const answers = found.answers;
+    const reply = answers[Math.floor(Math.random() * answers.length)];
+    const react = found.react || "💬";
 
-    return new Response(JSON.stringify({ status: true, message: "Taught successfully! ✅" }), { headers });
+    return new Response(
+      JSON.stringify({
+        success: true,
+        response: reply,
+        react,
+        id: senderId,
+        source: "database",
+      }),
+      { headers }
+    );
   }
 
-  // ─── ALLTEACH ───
-  if (action === "allteach") {
-    return new Response(JSON.stringify({ status: true, total: Object.keys(DB.teaches).length }), { headers });
-  }
+  // Simsimi fallback
+  try {
+    const r = await fetch(
+      `https://simsimi.fun/api/v2?text=${encodeURIComponent(q)}&lc=bd`,
+      { headers: { "x-api-key": process.env.SIMSIMI_KEY || "" } }
+    );
+    const d = await r.json();
+    const reply = d.success || "Amake aro shekao! 😅";
 
-  // ─── MYSTATS ───
-  if (action === "mystats") {
-    return new Response(JSON.stringify({ status: true, count: DB.stats[uid] || 0 }), { headers });
+    return new Response(
+      JSON.stringify({
+        success: true,
+        response: reply,
+        react: "💬",
+        id: senderId,
+        source: "simsimi",
+      }),
+      { headers }
+    );
+  } catch {
+    return new Response(
+      JSON.stringify({
+        success: true,
+        response: "Ektu pore try koro! 🙏",
+        react: "😅",
+        id: senderId,
+        source: "fallback",
+      }),
+      { headers }
+    );
   }
+}
 
-  // ─── TEACHERS ───
-  if (action === "teachers") {
-    const sorted = Object.entries(DB.stats)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([uid, count]) => ({ uid, count }));
-    return new Response(JSON.stringify({ status: true, teachers: sorted }), { headers });
+async function getDB() {
+  try {
+    const r = await fetch(
+      "https://raw.githubusercontent.com/taiba-Chowdhury-320/shizuoka-api/main/db.json"
+    );
+    return await r.json();
+  } catch {
+    return { teaches: {}, stats: {} };
   }
-
-  return new Response(JSON.stringify({ error: "Invalid action" }), { headers });
 }
